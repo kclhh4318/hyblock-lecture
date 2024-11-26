@@ -1,35 +1,60 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("MultiBet Contract", function () {
-  let MultiBet;
-  let multiBet;
+describe("MultiBetERCExp Contract", function () {
+  let Token;
+  let token;
+  let MultiBetERCExp;
+  let multiBetERCExp;
   let owner;
   let addr1;
   let addr2;
   let addr3;
 
+  const INITIAL_SUPPLY = ethers.parseEther("1000000"); // 1M tokens
+  const BET_AMOUNT = ethers.parseEther("100"); // 100 tokens for betting
+
   beforeEach(async function () {
-    MultiBet = await ethers.getContractFactory("MultiBet");
-    [owner, addr1, addr2, addr3, _] = await ethers.getSigners();
-    multiBet = await MultiBet.deploy();
-    await multiBet.waitForDeployment();
+    // Deploy TestToken
+    Token = await ethers.getContractFactory("TestToken");
+    [owner, addr1, addr2, addr3] = await ethers.getSigners();
+    token = await Token.deploy(INITIAL_SUPPLY);
+    await token.waitForDeployment();
+
+    // Deploy MultiBetERCExp with token address
+    MultiBetERCExp = await ethers.getContractFactory("MultiBetERCExp");
+    multiBetERCExp = await MultiBetERCExp.deploy(token.target);
+    await multiBetERCExp.waitForDeployment();
+
+    // Distribute tokens to test addresses
+    await token.transfer(addr1.address, ethers.parseEther("10000"));
+    await token.transfer(addr2.address, ethers.parseEther("10000"));
+    await token.transfer(addr3.address, ethers.parseEther("10000"));
+
+    // Approve MultiBetERCExp to spend tokens
+    await token.connect(addr1).approve(multiBetERCExp.target, ethers.parseEther("10000"));
+    await token.connect(addr2).approve(multiBetERCExp.target, ethers.parseEther("10000"));
+    await token.connect(addr3).approve(multiBetERCExp.target, ethers.parseEther("10000"));
   });
 
   describe("Deployment", function () {
     it("Should set the right owner", async function () {
-      expect(await multiBet.owner()).to.equal(owner.address);
+      expect(await multiBetERCExp.owner()).to.equal(owner.address);
+    });
+
+    it("Should set the correct token address", async function () {
+      expect(await multiBetERCExp.hyblockToken()).to.equal(token.target);
     });
   });
 
   describe("Creating Bets", function () {
     it("Owner can create a bet", async function () {
       const options = ["Option1", "Option2"];
-      await expect(multiBet.createBet("Test Topic", options))
-        .to.emit(multiBet, "BetCreated")
+      await expect(multiBetERCExp.createBet("Test Topic", options))
+        .to.emit(multiBetERCExp, "BetCreated")
         .withArgs(0, "Test Topic", options);
 
-      const betInfo = await multiBet.getBet(0);
+      const betInfo = await multiBetERCExp.getBet(0);
       expect(betInfo.topic).to.equal("Test Topic");
       expect(betInfo.isResolved).to.be.false;
     });
@@ -37,179 +62,92 @@ describe("MultiBet Contract", function () {
     it("Non-owner cannot create a bet", async function () {
       const options = ["Option1", "Option2"];
       await expect(
-        multiBet.connect(addr1).createBet("Test Topic", options)
+        multiBetERCExp.connect(addr1).createBet("Test Topic", options)
       ).to.be.revertedWith("Only the owner can perform this action");
-    });
-
-    it("Cannot create a bet with less than two options", async function () {
-      const options = ["Option1"];
-      await expect(
-        multiBet.createBet("Test Topic", options)
-      ).to.be.revertedWith("At least two options are required");
     });
   });
 
   describe("Placing Bets", function () {
     beforeEach(async function () {
-      await multiBet.createBet("Test Topic", ["Option1", "Option2", "Option3"]);
+      await multiBetERCExp.createBet("Test Topic", ["Option1", "Option2", "Option3"]);
     });
 
-    it("Users can place multiple bets on different options", async function () {
-      await expect(
-        multiBet
-          .connect(addr1)
-          .placeBet(0, "Option1", { value: ethers.parseEther("1") })
-      )
-        .to.emit(multiBet, "BetPlaced")
-        .withArgs(0, addr1.address, ethers.parseEther("1"), "Option1");
+    it("Users can place bets with tokens", async function () {
+      const initialBalance = await token.balanceOf(addr1.address);
+      
+      await expect(multiBetERCExp.connect(addr1).placeBet(0, "Option1", BET_AMOUNT))
+        .to.emit(multiBetERCExp, "BetPlaced")
+        .withArgs(0, addr1.address, BET_AMOUNT, "Option1");
 
-      await expect(
-        multiBet
-          .connect(addr1)
-          .placeBet(0, "Option2", { value: ethers.parseEther("2") })
-      )
-        .to.emit(multiBet, "BetPlaced")
-        .withArgs(0, addr1.address, ethers.parseEther("2"), "Option2");
+      const finalBalance = await token.balanceOf(addr1.address);
+      expect(initialBalance - finalBalance).to.equal(BET_AMOUNT);
 
-      const [optionIndexes, betAmounts] = await multiBet.getUserBet(
-        0,
-        addr1.address
-      );
-      expect(optionIndexes.length).to.equal(2);
-      expect(optionIndexes[0]).to.equal(0); // Option1 index
-      expect(optionIndexes[1]).to.equal(1); // Option2 index
-      expect(betAmounts[0]).to.equal(ethers.parseEther("1"));
-      expect(betAmounts[1]).to.equal(ethers.parseEther("2"));
+      const [options, betAmounts] = await multiBetERCExp.getBetOptionInfos(0);
+      expect(betAmounts[0]).to.equal(BET_AMOUNT);
     });
 
-    it("Users can place multiple bets on the same option", async function () {
-      await multiBet
-        .connect(addr1)
-        .placeBet(0, "Option1", { value: ethers.parseEther("1") });
-      await multiBet
-        .connect(addr1)
-        .placeBet(0, "Option1", { value: ethers.parseEther("2") });
-
-      const [optionIndexes, betAmounts] = await multiBet.getUserBet(
-        0,
-        addr1.address
-      );
-      expect(optionIndexes.length).to.equal(1);
-      expect(optionIndexes[0]).to.equal(0); // Option1 index
-      expect(betAmounts[0]).to.equal(ethers.parseEther("3")); // 1 + 2 ETH
+    it("Cannot place bet without approval", async function () {
+      await token.connect(addr1).approve(multiBetERCExp.target, 0);
+      
+      // ERC20 컨트랙트의 custom error를 사용
+      await expect(
+        multiBetERCExp.connect(addr1).placeBet(0, "Option1", BET_AMOUNT)
+      ).to.be.revertedWithCustomError(token, "ERC20InsufficientAllowance");
     });
 
-    it("Cannot place a bet on a non-existing option", async function () {
+    it("Cannot place bet with zero amount", async function () {
       await expect(
-        multiBet
-          .connect(addr1)
-          .placeBet(0, "Option4", { value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Option does not exist");
-    });
-
-    it("Cannot place a bet with zero amount", async function () {
-      await expect(
-        multiBet.connect(addr1).placeBet(0, "Option1", { value: 0 })
+        multiBetERCExp.connect(addr1).placeBet(0, "Option1", 0)
       ).to.be.revertedWith("Bet amount must be greater than zero");
     });
   });
 
   describe("Resolving Bets", function () {
     beforeEach(async function () {
-      await multiBet.createBet("Test Topic", ["Option1", "Option2", "Option3"]);
-
-      // addr1 bets 1 ETH on Option1 and 2 ETH on Option2
-      await multiBet
-        .connect(addr1)
-        .placeBet(0, "Option1", { value: ethers.parseEther("1") });
-      await multiBet
-        .connect(addr1)
-        .placeBet(0, "Option2", { value: ethers.parseEther("2") });
-
-      // addr2 bets 3 ETH on Option2
-      await multiBet
-        .connect(addr2)
-        .placeBet(0, "Option2", { value: ethers.parseEther("3") });
-
-      // addr3 bets 4 ETH on Option3
-      await multiBet
-        .connect(addr3)
-        .placeBet(0, "Option3", { value: ethers.parseEther("4") });
+      await multiBetERCExp.createBet("Test Topic", ["Option1", "Option2"]);
+      await multiBetERCExp.connect(addr1).placeBet(0, "Option1", BET_AMOUNT);
+      await multiBetERCExp.connect(addr2).placeBet(0, "Option2", BET_AMOUNT);
     });
 
-    it("Owner can resolve a bet", async function () {
-      await expect(multiBet.resolveBet(0, "Option2"))
-        .to.emit(multiBet, "BetResolved")
-        .withArgs(0, "Option2");
+    it("Owner can resolve bet and winners receive rewards", async function () {
+      const initialBalance = await token.balanceOf(addr1.address);
+      
+      await multiBetERCExp.resolveBet(0, "Option1");
+      
+      const finalBalance = await token.balanceOf(addr1.address);
+      expect(finalBalance - initialBalance).to.equal(BET_AMOUNT * 2n);
 
-      const betInfo = await multiBet.getBet(0);
+      const betInfo = await multiBetERCExp.getBet(0);
       expect(betInfo.isResolved).to.be.true;
-      expect(betInfo.winningOption).to.equal("Option2");
+      expect(betInfo.winningOption).to.equal("Option1");
     });
 
-    it("Winners receive correct rewards when multiple bets are placed", async function () {
-      const initialBalance1 = await addr1.provider.getBalance(addr1.address);
-      const initialBalance2 = await addr2.provider.getBalance(addr2.address);
-
-      const tx = await multiBet.resolveBet(0, "Option2");
-      const receipt = await tx.wait();
-
-      const finalBalance1 = await addr1.provider.getBalance(addr1.address);
-      const finalBalance2 = await addr2.provider.getBalance(addr2.address);
-
-      // Total pot is 10 ETH (1+2+3+4)
-      // Total bets on Option2: 2+3 = 5 ETH
-      // addr1 bet 2 ETH on Option2
-      // addr2 bet 3 ETH on Option2
-
-      // addr1's reward: (2 ETH / 5 ETH) * 10 ETH = 4 ETH
-      // addr2's reward: (3 ETH / 5 ETH) * 10 ETH = 6 ETH
-
-      const expectedReward1 = ethers.parseEther("4");
-      const expectedReward2 = ethers.parseEther("6");
-
-      // Adjust for gas used in the transaction
-      const balanceDifference1 = finalBalance1 - initialBalance1;
-      const balanceDifference2 = finalBalance2 - initialBalance2;
-
-      expect(balanceDifference1).to.equal(expectedReward1);
-      expect(balanceDifference2).to.equal(expectedReward2);
-    });
-
-    it("Users who didn't bet on winning option receive nothing", async function () {
-      const initialBalance3 = await addr3.provider.getBalance(addr3.address);
-
-      const tx = await multiBet.resolveBet(0, "Option2");
-      await tx.wait();
-
-      const finalBalance3 = await addr3.provider.getBalance(addr3.address);
-
-      // addr3 should not receive any rewards
-      expect(finalBalance3 - initialBalance3).to.equal(0);
+    it("Losers don't receive rewards", async function () {
+      const initialBalance = await token.balanceOf(addr2.address);
+      
+      await multiBetERCExp.resolveBet(0, "Option1");
+      
+      const finalBalance = await token.balanceOf(addr2.address);
+      expect(finalBalance).to.equal(initialBalance);
     });
   });
 
-  describe("Edge Cases", function () {
-    it("Cannot place a bet on a resolved bet", async function () {
-      await multiBet.createBet("Test Topic", ["Option1", "Option2"]);
-      await multiBet.resolveBet(0, "Option1");
-      await expect(
-        multiBet
-          .connect(addr1)
-          .placeBet(0, "Option1", { value: ethers.parseEther("1") })
-      ).to.be.revertedWith("Bet has been resolved");
+  describe("User Bet Information", function () {
+    beforeEach(async function () {
+      await multiBetERCExp.createBet("Test Topic", ["Option1", "Option2"]);
+      await multiBetERCExp.connect(addr1).placeBet(0, "Option1", BET_AMOUNT);
     });
 
-    it("Non-bettors do not receive rewards", async function () {
-      await multiBet.createBet("Test Topic", ["Option1", "Option2"]);
-      await multiBet
-        .connect(addr1)
-        .placeBet(0, "Option1", { value: ethers.parseEther("1") });
-      const initialBalance2 = await addr2.provider.getBalance(addr2.address);
-      await multiBet.resolveBet(0, "Option1");
-      const finalBalance2 = await addr2.provider.getBalance(addr2.address);
+    it("Should return correct user bet info", async function () {
+      const [optionIndexes, betAmounts] = await multiBetERCExp.getUserBet(0, addr1.address);
+      expect(optionIndexes[0]).to.equal(0);
+      expect(betAmounts[0]).to.equal(BET_AMOUNT);
+    });
 
-      expect(finalBalance2 - initialBalance2).to.equal(0);
+    it("Should return empty arrays for users who haven't bet", async function () {
+      const [optionIndexes, betAmounts] = await multiBetERCExp.getUserBet(0, addr2.address);
+      expect(optionIndexes.length).to.equal(0);
+      expect(betAmounts.length).to.equal(0);
     });
   });
 });

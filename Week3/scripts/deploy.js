@@ -3,7 +3,7 @@ const { ethers } = require("hardhat");
 
 async function main() {
   // 스마트 컨트랙트 가져오기
-  const MultiBet = await ethers.getContractFactory("MultiBetERC");
+  const MultiBet = await ethers.getContractFactory("MultiBetExp");
   const multiBet = await MultiBet.deploy();
   await multiBet.waitForDeployment(); // 변경된 메서드
 

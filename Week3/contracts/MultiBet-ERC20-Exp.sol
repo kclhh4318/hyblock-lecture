@@ -9,7 +9,7 @@ interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
 }
 
-contract MultiBetERC {
+contract MultiBetERCExp {
     // MultiBetExp라는 이름의 스마트 컨트랙트 정의
 
     address public owner;

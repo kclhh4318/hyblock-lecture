@@ -3,7 +3,7 @@ const {ethers} = require("hardhat");
 require("dotenv").config();
 
 async function main(){
-    const MultiBetERC = await ethers.getContractFactory("MultiBetERC");
+    const MultiBetERC = await ethers.getContractFactory("MultiBetERCExp");
     const multiBetERC = await MultiBetERC.deploy(HYBLOCK_TOKEN_ADDRESS);
     await multiBetERC.waitForDeployment();
 
